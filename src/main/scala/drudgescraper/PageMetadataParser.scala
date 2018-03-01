@@ -10,12 +10,22 @@ import scala.collection.JavaConverters._
 
 object PageMetadataParser {
   
-  import DrudgeScraper.DrudgeLink
+  //import DrudgeScraper.DrudgeLink
+  
+  def enrichMainAndSplashFromTopElementsDiv(page: Document): Document = {
+    val drudgeTopHeadlineDiv = page.select("#drudgeTopHeadlines")
+    
+    // modify `page` in place
+    drudgeTopHeadlineDiv.select("font[size=+7]").select("a[href]").attr("id", "splash")
+    drudgeTopHeadlineDiv.select("a").select(":not(#splash)").attr("id", "top")
+    println("here!")
+    page
+  }
 
   /*
    * More recent iterations of the DrudgeReport have a div #drudgeTopHeadlines
    * that we can use, naturally, to identify the top headlines.
-   */
+
   def mainAndSplashFromTopElementsDiv(page: Document): (Set[Element], Set[Element]) = {
     val drudgeTopHeadlineDiv = page.select("#drudgeTopHeadlines")
     val drudgeTopHeadlineSet = drudgeTopHeadlineDiv.select("a[href]").asScala.toSet
@@ -24,7 +34,11 @@ object PageMetadataParser {
     val nonSplashElements: Set[Element] = drudgeTopHeadlineSet.diff(splashElements)
     (splashElements, nonSplashElements)
   }
+  * 
+  */
+  
 
+  /*
   def mainAndSplashFromSelectorsAndAttributes(doc: Document): (Set[Element], Set[Element]) = {
     val splashElements = doc.select("font[size=+7]").select("a[href!=http://www.drudgereport.com/]").asScala.toSet
     val nonSplashElements = doc.select("center + br + br + a").asScala.toSet
@@ -45,4 +59,6 @@ object PageMetadataParser {
 
    (splashLinks ++ topLinks).unzip  
   }
+  * 
+  */
 }
