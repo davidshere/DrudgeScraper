@@ -32,13 +32,21 @@ object PageMetadataParser {
     // the headline. we know top headlines won't be after that. 
     val splash = {
       val splashHeadlinesFound = page.select("#splash")
-      if (splashHeadlinesFound.size !=0 ) splashHeadlinesFound.asScala.toList.head
+      if (splashHeadlinesFound.size !=0 ) splashHeadlinesFound.first()
       else page.select("img[src~=logo9.gif]").parents.first()
     }
+
+    // now we'll grab any links before the splash, but after the navigation bar
+    // we can find what went in the navigation bar because they have the target "_top"
     val allLinks = page.select("a[href]").asScala.toList
     val indexOfSplash = allLinks.indexOf(splash)
+    val firstLinks = allLinks.take(indexOfSplash).toSet
+    val aElementsWithTargets = page.select("a[target]").asScala.toSet
     
-    page.select("center + br + br + a").attr("id", "top")
+    val topElements = firstLinks diff aElementsWithTargets
+    for (elem <- topElements) {
+      elem.attr("id", "top")
+    }
     
     page
   }
