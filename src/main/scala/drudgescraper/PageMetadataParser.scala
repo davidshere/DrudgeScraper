@@ -18,47 +18,34 @@ object PageMetadataParser {
     // modify `page` in place
     drudgeTopHeadlineDiv.select("font[size=+7]").select("a[href]").attr("id", "splash")
     drudgeTopHeadlineDiv.select("a").select(":not(#splash)").attr("id", "top")
-    println("here!")
+
     page
   }
 
-  /*
-   * More recent iterations of the DrudgeReport have a div #drudgeTopHeadlines
-   * that we can use, naturally, to identify the top headlines.
 
-  def mainAndSplashFromTopElementsDiv(page: Document): (Set[Element], Set[Element]) = {
-    val drudgeTopHeadlineDiv = page.select("#drudgeTopHeadlines")
-    val drudgeTopHeadlineSet = drudgeTopHeadlineDiv.select("a[href]").asScala.toSet
-
-    val splashElements: Set[Element] = drudgeTopHeadlineDiv.select("font[size=+7]").select("a[href]").asScala.toSet
-    val nonSplashElements: Set[Element] = drudgeTopHeadlineSet.diff(splashElements)
-    (splashElements, nonSplashElements)
-  }
-  * 
-  */
-  
-
-  /*
-  def mainAndSplashFromSelectorsAndAttributes(doc: Document): (Set[Element], Set[Element]) = {
-    val splashElements = doc.select("font[size=+7]").select("a[href!=http://www.drudgereport.com/]").asScala.toSet
-    val nonSplashElements = doc.select("center + br + br + a").asScala.toSet
-    (splashElements, nonSplashElements)
-  }
-  
-
-  def mainAndSplash(doc: Document): (Set[Element], Set[DrudgeLink]) = {
-    val (splashElements, topElements) = if(doc.select("div#drudgeTopHeadlines").isEmpty()) {
-      mainAndSplashFromSelectorsAndAttributes(doc)
-    }
-    else {
-      mainAndSplashFromTopElementsDiv(doc: Document)
-    }
+  def enrichMainAndSplashFromSelectorsAndAttributes(page: Document): Document = {
+    // modify `page` in place
+    page.select("font[size=+7]").select("a:not(:has(img))").attr("id", "splash")
     
-   val splashLinks: Set[(Element, DrudgeLink)] = splashElements.map(elem => (elem, DrudgeLink("date", elem.attr("href"), elem.text(), true, false)))
-   val topLinks: Set[(Element, DrudgeLink)] = topElements.map(elem => (elem, DrudgeLink("date", elem.attr("href"), elem.text(), false, true)))
-
-   (splashLinks ++ topLinks).unzip  
+    // need to find a splash element, so we know where to work backwards
+    // from. either the actual splash element or the img element containing 
+    // the headline. we know top headlines won't be after that. 
+    val splash = {
+      val splashHeadlinesFound = page.select("#splash")
+      if (splashHeadlinesFound.size !=0 ) splashHeadlinesFound.asScala.toList.head
+      else page.select("img[src~=logo9.gif]").parents.first()
+    }
+    val allLinks = page.select("a[href]").asScala.toList
+    val indexOfSplash = allLinks.indexOf(splash)
+    
+    page.select("center + br + br + a").attr("id", "top")
+    
+    page
   }
-  * 
-  */
+  
+
+  def enrich(doc: Document): Document =
+    if(doc.select("div#drudgeTopHeadlines").isEmpty()) enrichMainAndSplashFromSelectorsAndAttributes(doc)
+    else enrichMainAndSplashFromTopElementsDiv(doc: Document)
+
 }
