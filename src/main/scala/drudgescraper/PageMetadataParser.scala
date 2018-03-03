@@ -38,10 +38,10 @@ object PageMetadataParser {
 
     // now we'll grab any links before the splash, but after the navigation bar
     // we can find what went in the navigation bar because they have the target "_top"
-    val allLinks = page.select("a[href]").asScala.toList
+    val allLinks = page.select("a[href]").asScala
     val indexOfSplash = allLinks.indexOf(splash)
-    val firstLinks = allLinks.take(indexOfSplash).toSet
-    val aElementsWithTargets = page.select("a[target]").asScala.toSet
+    val firstLinks = allLinks.take(indexOfSplash)
+    val aElementsWithTargets = page.select("a[target]").asScala
     
     val topElements = firstLinks diff aElementsWithTargets
     for (elem <- topElements) {
