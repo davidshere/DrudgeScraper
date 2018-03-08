@@ -9,13 +9,15 @@ import scala.concurrent.duration._
 
 import akka.actor.{ Actor, ActorSystem }
 import akka.{ NotUsed, Done }
+import akka.util.ByteString
 
 import akka.stream._
 import akka.stream.scaladsl._
 
 import akka.http.scaladsl.Http
+
 import akka.http.scaladsl.client.RequestBuilding
-import akka.http.scaladsl.model.{HttpRequest, HttpResponse, HttpMethods}
+import akka.http.scaladsl.model._
 import akka.http.scaladsl.settings.ConnectionPoolSettings
 
 import com.typesafe.config.ConfigFactory
@@ -44,13 +46,23 @@ object DrudgeScraper extends App {
   val poolClientFlow = Http().superPool[Promise[HttpResponse]](settings = ConnectionPoolSettings(system).withMaxConnections(10))
   
   val pipe = Source(requests)
-    .map(x => { println("-", x); x})
     .via(poolClientFlow)
-    .map { case (t, p) => println("wtf!")
-    }.runWith(Sink.foreach({println}))
+    .map(x => { println("-", x); x})
+    .runWith(Sink.head)
+    .map(_._1)
+    .flatMap(Future.fromTry)
 
   // shut things off once the pipeline is done doing everything it's going to do
-  pipe.onComplete { a =>
-      system.terminate()
+  pipe.onComplete {
+    case Success(r) => r match {
+          case HttpResponse(StatusCodes.OK, headers, entity, _) =>
+            entity.dataBytes.runFold(ByteString(""))(_ ++ _).foreach { body =>
+              println("Got response, body: " + body.utf8String)
+            }
+          case resp @ HttpResponse(code, _, _, _) =>
+            println("Request failed, response code: " + code)
+            resp.discardEntityBytes()
+  }
+    case Failure(e) => {println(e)}
   }
 }
