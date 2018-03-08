@@ -1,167 +1,252 @@
 package drudgescraper
 
-import scala.collection.JavaConverters._
-
 import java.io.File
+import java.time._
+import java.time.temporal.ChronoUnit.DAYS
+import java.nio.file.Paths
+
+import scala.util.{ Failure, Success, Try }
+
+import scala.collection.JavaConverters._
+import scala.concurrent._
+import scala.concurrent.duration._
 
 import org.jsoup.Jsoup
-import org.jsoup.nodes.{Document, Element, Node, TextNode, DataNode}
-import org.jsoup.select.{Elements, NodeVisitor, NodeFilter}
-import org.jsoup.parser.Tag
+import org.jsoup.nodes.{Document, Element}
+import org.jsoup.select.Elements
 
 import akka.actor.{ Actor, ActorLogging, Props, ActorSystem }
+import akka.{ NotUsed, Done }
+import akka.util.ByteString
 
+import akka.stream._
+import akka.stream.scaladsl._
+import akka.stream.QueueOfferResult.Enqueued
 
-import java.time._
-import java.time.temporal.ChronoUnit.DAYS;
+import akka.http.scaladsl.Http
+import akka.http.scaladsl.client.RequestBuilding
+import akka.http.scaladsl.model.{HttpRequest, HttpResponse, HttpMethods}
+import akka.http.scaladsl.settings.ConnectionPoolSettings
 
+import com.typesafe.config.ConfigFactory
+
+//object Main extends App {
+object Ex {
+  final case class Author(handle: String)
+  final case class Hashtag(name: String)
+  final case class Tweet(author: Author, timestamp: Long, body: String) {
+    def hashtags: Set[Hashtag] = 
+      body.split(" ").collect {case t if t.startsWith("#") => Hashtag(t) }.toSet
+  }
+  
+  val akkaTag = Hashtag("#akka")
+  
+  implicit val system = ActorSystem("reactive-tweets")
+  implicit val materializer = ActorMaterializer()
+  implicit val ec = system.dispatcher
+  
+  val tweets: Source[Tweet, NotUsed] = Source(
+  Tweet(Author("rolandkuhn"), System.currentTimeMillis, "#akka rocks!") ::
+    Tweet(Author("patriknw"), System.currentTimeMillis, "#akka !") ::
+    Tweet(Author("bantonsson"), System.currentTimeMillis, "#akka !") ::
+    Tweet(Author("drewhk"), System.currentTimeMillis, "#akka !") ::
+    Tweet(Author("ktosopl"), System.currentTimeMillis, "#akka on the rocks!") ::
+    Tweet(Author("mmartynas"), System.currentTimeMillis, "wow #akka !") ::
+    Tweet(Author("akkateam"), System.currentTimeMillis, "#akka rocks!") ::
+    Tweet(Author("bananaman"), System.currentTimeMillis, "#bananas rock!") ::
+    Tweet(Author("appleman"), System.currentTimeMillis, "#apples rock!") ::
+    Tweet(Author("drama"), System.currentTimeMillis, "we compared #apples to #oranges!") ::
+    Nil)
+  
+  val authors: Source[Author, NotUsed] = 
+    tweets
+      .filter(_.hashtags.contains(akkaTag))
+      .map(_.author)
+  authors.runForeach(println)
+
+  val hashtags: Source[Hashtag, NotUsed] = tweets.mapConcat(_.hashtags.toList)
+  
+  hashtags.runForeach(println)
+  
+  val count: Flow[Tweet, Int, NotUsed] = Flow[Tweet].map(_ => 1)
+
+  val sumSink: Sink[Int, Future[Int]] = Sink.fold[Int, Int](0)(_ + _)
+
+  val counterGraph: RunnableGraph[Future[Int]] =
+    tweets
+      .via(count)
+      .toMat(sumSink)(Keep.right)
+  
+  val sum: Future[Int] = counterGraph.run()
+  
+  sum.foreach(c => println(s"Total tweets processed: $c"))
+}
 
 object DrudgeScraper extends App {
+//object DrudgeScraper {
+  import ScraperUtils._
   
-  import LinksFromDrudgePage._
+  implicit val system = ActorSystem("drudge-scraper")
+  implicit val ec = system.dispatcher
+  implicit val settings = system.settings
+  
+  implicit val materializer = ActorMaterializer()
+  
+  val dayPageLinks = ScraperUtils.generateDayPageLinks
+  
+  val allRequests = for {
+    link <- dayPageLinks
+  //} yield dayPageLinks(i).url
+  } yield (HttpRequest(HttpMethods.GET, link.url), Promise[HttpResponse])
 
-  trait Link {
-    def url: String
+  val requests = allRequests take 2
+
+  val poolClientFlow = Http().superPool[Promise[HttpResponse]](settings = ConnectionPoolSettings(system).withMaxConnections(10))
+  
+
+  
+  val pipe = Source(requests)
+    .map(x => { println("-", x); x})
+    .via(poolClientFlow)
+    .runWith(Sink.head)(materializer)
+    
+  //pipe.onComplete { (t: Try[HttpResponse], p: Promise[HttpResponse]) =>
+  //    println("completed!")
+  //}
+
+  pipe.onComplete { a =>
+      println(a)
+      system.terminate()
   }
-  final case class DrudgePageLink(url: String, pageDt: LocalDateTime) extends Link
-  final case class DayPageLink(url: String, date: LocalDate) extends Link
-  final case class DrudgeLink(url: String, pageDt: LocalDateTime, hed: String, isSplash: Boolean, isTop: Boolean) extends Link
-
-  def urlFromDate(date: LocalDate): String = {
-    "http://www.drudgereportarchives.com/data/%d/%d/%d/index.htm".format(
-        date.getYear(),
-        date.getMonthValue(),
-        date.getDayOfMonth()
-    )
-  }
-
-  def generateDayPageLinks: Vector[DayPageLink] = {
-    val start = LocalDate.of(2011, 11, 18)
-    val end = LocalDate.of(2011, 11, 22)//now
-    for {
-      daysFromStart <- 0L to DAYS.between(start, end) toVector
-    } yield DayPageLink(urlFromDate(start.plusDays(daysFromStart)), start.plusDays(daysFromStart))
-  }
-
-  def fetchPageWithJsoup(link: Link): Document = {
-    Jsoup.connect(link.url).get()
-  }
-
-  def transformDrudgePageUrlIntoLocalDateTime(url: String): LocalDateTime = {
-    val drudgePageDatetimeFormat = "yyyyMMdd_HHmmss"
-    val drudgePageUrlDatetimeFormat = format.DateTimeFormatter.ofPattern(drudgePageDatetimeFormat)
-    val drudgePageUrlDatetimePortion = url.split("/").last.split("\\.").head
-    LocalDateTime.parse(drudgePageUrlDatetimePortion, drudgePageUrlDatetimeFormat)
-  }
-
-  def drudgePageLinkFromElement(elem: Element): DrudgePageLink = {
-    val pageDt = transformDrudgePageUrlIntoLocalDateTime(elem.attr("href"))
-    DrudgePageLink(elem.attr("href"), pageDt)
-  }
-
-  def parseDayPage(page: Document, url: String): List[DrudgePageLink] = {
-    for {
-      link <- page.select("a[href]").asScala.toList;
-      if (link.text() != "^" && link.attr("href").startsWith("http://www.drudgereportArchives.com/data/"))
-    } yield drudgePageLinkFromElement(link)
-  }
-  
-  
-  val dayPageLinks = generateDayPageLinks
-  val oneDay = dayPageLinks(0)
-  
-  val dayPage = fetchPageWithJsoup(oneDay)
-  val parsedDayPage = parseDayPage(dayPage, oneDay.url)
-  val oneDrudgePageLink = parsedDayPage(0)
-  
-  val drudgePageDocument = fetchPageWithJsoup(oneDrudgePageLink)
-
-  
-  for(l <- transformPage(drudgePageDocument, oneDrudgePageLink.pageDt)) {
-    println(l)
-  }
-  
-}
-
-
-
-
-/*
- * Actors?:
- *  1) collect results and write to parquet/s3
- *  	-> number of parsed pages it should expect
- *    -> parsed pages (collections of DrudgePages)
- *    
- *  2) fetcher
- *  3) parser
- * 
- */ 
-
-
-object Fetcher {
-  def props: Props = Props(new Fetcher())
-  
-  final case class DrudgePageLink(url: String, date: LocalDate)
-  final case class DayPageLink(url: String, date: LocalDate)
-}
-
-class Fetcher extends Actor with ActorLogging {
-  import Fetcher._
-  
-  
-  override def receive: Receive = {
-    case DayPageLink(url, date) => {
- 
+    //.map(x => {println("|", x); x})
+    //.toMat(Sink.foreach { p => println(p) })(Keep.both)
+    //.run()
+    
+  //val poolClientFlow = Http().cachedHostConnectionPool(...)
+  /*
+  val requestQueue = Source.queue[(HttpRequest, Promise[HttpResponse])](2000, OverflowStrategy.dropNew)
+    .via(poolClientFlow)
+    .toMat(Sink.foreach({
+      case ((Success(resp), p)) => p.success(resp); ()
+      case ((Failure(e), p)) => p.failure(e); ()
+    }))(Keep.left)
+    .run
+    
+    private def doRequest(req: HttpRequest): Future[HttpResponse] = {
+      val promise = Promise[HttpResponse]
+      requestQueue.offer(req -> promise).flatMap {
+        case Enqueued => promise.future
+        case _ => Future.failed(new RuntimeException())
+      }
     }
-    case DrudgePageLink(url, date) => {
-      // fetch drudge page from drudgereportarchives.com
-      // send drudge page to parser
+  
+  val resp = doRequest(requests(0)._1)
+  resp.onComplete({
+    case Success(r) => println(r)
+    case Failure(e) => println(e)
+  })
+  * 
+  */
+
+
+    
+    
+    /*
+    Source(requests)
+       .via(poolClientFlow)
+      .runWith(Sink.head)
+      .flatMap { e =>e{
+         case Success(e) => e.entity.dataBytes.runFold(ByteString.empty)(_ ++ _)
+         case Failure(e) => "whoops!"       
+      }
     }
-  }
+      .map(_.utf8String)
+      .foreach {println}
+      * 
+      */
+  /*
+    val pipeline =
+      Source.queue[(HttpRequest, String)](100, OverflowStrategy.backpressure)
+        .via(Http().cachedHostConnectionPool("www.drudgereportarchives.com"))
+        .toMat(Sink.foreach { p =>
+          println("*")
+          println(p._2)
+          p._1.get.entity.dataBytes.runFold(ByteString.empty)(_ ++ _).map(_.utf8String).foreach(println)
+        })(Keep.left)
+        .run()
+
+    Source(List("/data/2001/11/18/20011118_010140.htm","/data/2013/12/18/20131218_010738.htm", "/data/2009/03/04/20090304_130111.htm")).runForeach { reqUri => {
+        pipeline.offer((HttpRequest(HttpMethods.GET, reqUri), reqUri))
+      }
+    }
+    * 
+    */
+  
 }
 
+//object Main extends App {
+object M {
+  
+  implicit val system = ActorSystem("drudge-scraper")
+  //implicit val ec = system.dispatcher
+  
+  implicit val materializer = ActorMaterializer()
+  
+  println(Thread.currentThread().getName)
+
+  import system.dispatcher
+  
+  val source: Source[Int, NotUsed] = Source(1 to 100)
+  //val done: Future[Done] = source.runForeach(i => println(i))
+  
+  val factorials = source.scan(BigInt(1))((acc, next) => acc * next)
+
+  val done: Future[Done] = 
+    factorials
+    .zipWith(Source(0 to 10))((num, idx) => s"$idx! = $num")
+    .throttle(1, 0.25.seconds, 1, ThrottleMode.shaping)
+    .runForeach(println)
+  
+  def processingStage(name: String): Flow[String, String, NotUsed] = 
+   Flow[String].map { s ⇒
+     println(name + " started processing " + s + " on thread " + Thread.currentThread().getName)
+     Thread.sleep(100) // Simulate long processing *don't sleep in your real code!*
+     println(name + " finished processing " + s)
+     s
+   }
+  
+  val completion = Source(List("Hello", "Streams", "World!"))
+   .via(processingStage("A")).async
+   .via(processingStage("B")).async
+   .via(processingStage("C")).async
+   .runWith(Sink.foreach(s ⇒ println("Got output " + s)))
+  
+  val result: Future[IOResult] =
+    factorials
+      .map(num => ByteString(s"$num\n"))
+      .runWith(FileIO.toPath(Paths.get("factorials.txt")))
+
+  def lineSink(filename: String): Sink[String, Future[IOResult]] =
+    Flow[String]
+      .map(s => ByteString(s + "\n"))
+      .toMat(FileIO.toPath(Paths.get(filename)))(Keep.right)
+  
+  val result2: Future[IOResult] = 
+    factorials
+      .map(_.toString)
+      .runWith(lineSink("factorial2.txt"))
+
+  val aggFuture = for {
+    f1 <- done
+    f2 <- result
+    f3 <- result2
+  } yield (f1, f2, f3)
+  
+  aggFuture.onComplete(_ => system.terminate())
+  //result.onComplete(_ => system.terminate())
 
 
-/*
-class Parser extends Actor with ActorLogging {
-  // for now just log that something was recieved
-  override def receive: Receive = {
-    case _ => println(_)
-  }
 }
-* 
 
-
-  
-object DrudgeScraper extends App {
-  
-  def urlFromDate(date: LocalDate): String = {
-    "http://www.drudgereportarchives.com/data/%d/%d/%d/index.htm".format(
-        date.getYear(),
-        date.getMonthValue(),
-        date.getDayOfMonth()
-    )
-  }
-  
-  def generateDayPageUrls() = {
-    val start = LocalDate.of(2001, 11, 18)
-    val end = LocalDate.now
-    for {
-      daysFromStart <- 0L to DAYS.between(start, end) toVector
-    } yield Fetcher.DayPageLink(urlFromDate(start.plusDays(daysFromStart)), start.plusDays(daysFromStart))
-  }
-  
-	val system = ActorSystem("drudge-scraper")
-	
-	val fetcher = system.actorOf(Fetcher.props, "Fetcher")
-	
-	for(url <- generateDayPageUrls) {
-	  fetcher ! url
-	}
-
-	system.terminate()
-}
-* 
-*/
 
 

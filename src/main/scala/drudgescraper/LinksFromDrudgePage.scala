@@ -13,7 +13,7 @@ object LinksFromDrudgePage {
 
   //import PageMetadataParser.mainAndSplash
   import PageMetadataParser.enrich
-  import DrudgeScraper.DrudgeLink
+  import ScraperUtils.DrudgeLink
   
   def drudgeLinkFromJsoupElement(elem: Element, pageDate: LocalDateTime): DrudgeLink =
     DrudgeLink(
