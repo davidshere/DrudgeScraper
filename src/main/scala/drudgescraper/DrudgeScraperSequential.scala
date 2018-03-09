@@ -10,7 +10,7 @@ import org.jsoup.select.Elements
 import scala.collection.JavaConverters._
 
 
-object DrudgeScraperSequential { // extends App {
+object DrudgeScraperSequential {//extends App {
   
   import LinksFromDrudgePage._
 
@@ -54,8 +54,7 @@ object DrudgeScraperSequential { // extends App {
     DrudgePageLink(elem.attr("href"), pageDt)
   }
 
-  def parseDayPage(page: Document, url: String): List[DrudgePageLink] = {
-    println(url)
+  def parseDayPage(page: Document): List[DrudgePageLink] = {
     for {
       link <- page.select("a[href]").asScala.toList;
       if (link.text() != "^" && link.attr("href").startsWith("http://www.drudgereportArchives.com/data/"))
@@ -67,7 +66,7 @@ object DrudgeScraperSequential { // extends App {
   val oneDay = dayPageLinks(0)
   
   val dayPage = fetchPageWithJsoup(oneDay)
-  val parsedDayPage = parseDayPage(dayPage, oneDay.url)
+  val parsedDayPage = parseDayPage(dayPage)
   val oneDrudgePageLink = parsedDayPage(0)
   println(parsedDayPage.size)
   
@@ -82,7 +81,7 @@ object DrudgeScraperSequential { // extends App {
   
   time {
     val dayPage = fetchPageWithJsoup(oneDay)
-    val parsedDayPage = parseDayPage(dayPage, oneDay.url)
+    val parsedDayPage = parseDayPage(dayPage)
     val oneDrudgePageLink = parsedDayPage(0)
   
     for (drudgePageLink <- parsedDayPage) {
