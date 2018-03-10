@@ -25,7 +25,6 @@ object LinksFromDrudgePage {
     )
      
   def transformPage(page: Document, pageDt: LocalDateTime): List[DrudgeLink] = {
-    implicit val pageDate = pageDt
     val enrichedPage = enrich(page)
     val links = enrichedPage
       .select("td:not(.text9)") // eliminate archive links below the bottom of the drudge page

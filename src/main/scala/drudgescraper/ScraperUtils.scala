@@ -2,15 +2,27 @@ package drudgescraper
 
 import java.time._
 import java.time.temporal.ChronoUnit.DAYS
+import scala.concurrent.duration._
+
 
 import org.jsoup.Jsoup
 import org.jsoup.nodes.{Document, Element}
 
 import scala.collection.JavaConverters._
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.{Future, Await, Promise}
+import scala.util.{Success, Failure, Try}
+
+import akka.http.scaladsl.model._
 
 object ScraperUtils {
-    trait Link {
+
+  import LinksFromDrudgePage._
+
+  trait Link {
     def url: String
+
+    def forFlow = (HttpRequest(HttpMethods.GET, this.url), Promise[HttpResponse])
   }
 
   final case class DrudgePageLink(url: String, pageDt: LocalDateTime) extends Link
@@ -52,5 +64,16 @@ object ScraperUtils {
       link <- doc.select("a[href]").asScala.toList;
       if (link.text() != "^" && link.attr("href").startsWith("http://www.drudgereportArchives.com/data/"))
     } yield drudgePageLinkFromElement(link)
+  }
+
+  def asyncParseDayPage(pageFuture: Future[String]): List[DrudgePageLink] = {
+    val page = Await.result(pageFuture, 1.second)
+    parseDayPage(page)
+  }
+
+  def asyncTransformPage(pageFuture: Future[String]): List[DrudgeLink] = {
+    val page = Await.result(pageFuture, 1.second)
+    val soup = Jsoup.parse(page)
+    transformPage(soup, LocalDateTime.of(2001, 11, 10, 1, 1, 1))
   }
 }

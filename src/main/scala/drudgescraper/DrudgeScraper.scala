@@ -2,10 +2,13 @@ package drudgescraper
 
 import scala.util.{ Failure, Success, Try }
 
+import java.io.File
+
 import scala.collection.JavaConverters._
 
 import scala.concurrent._
 import scala.concurrent.duration._
+
 
 import akka.actor.{ Actor, ActorSystem }
 import akka.{ NotUsed, Done }
@@ -19,13 +22,15 @@ import akka.http.scaladsl.Http
 import akka.http.scaladsl.client.RequestBuilding
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.settings.ConnectionPoolSettings
+import akka.http.scaladsl.unmarshalling.{FromEntityUnmarshaller, Unmarshal}
 
-import com.typesafe.config.ConfigFactory
+
 
 
 object DrudgeScraper extends App {
 //object DrudgeScraper {
   import ScraperUtils._
+  import LinksFromDrudgePage._
   
   implicit val system = ActorSystem("drudge-scraper")
   implicit val ec = system.dispatcher
@@ -33,36 +38,66 @@ object DrudgeScraper extends App {
   
   implicit val materializer = ActorMaterializer()
   
+  def htmlFromHttpResponse(resp: Try[HttpResponse]): Future[String] =
+    resp match {
+      case Success(r) => {
+        r match {
+          case HttpResponse(StatusCodes.OK, headers, entity, _) =>
+            entity.dataBytes.runFold(ByteString(""))(_ ++ _).map { body =>
+              body.utf8String
+            }
+          case resp @ HttpResponse(code, _, _, _) =>
+            resp.discardEntityBytes()
+            Future.successful("Not really!")
+        }
+      }
+      case Failure(e) => {
+       Future.failed(e)
+      }
+    }
+
+  val html = Flow[Try[HttpResponse]].map(htmlFromHttpResponse)
+
   val dayPageLinks = ScraperUtils.generateDayPageLinks
   
   val allRequests = for {
-    link <- dayPageLinks
-  //} yield dayPageLinks(i).url
-  } yield (HttpRequest(HttpMethods.GET, link.url), Promise[HttpResponse])
+    dayPageLink <- dayPageLinks
+  } yield dayPageLink.forFlow
 
-  val requests = allRequests take 2
+  val requests = allRequests take 1
 
   //val poolClientFlow = Http().cachedHostConnectionPool(...)
-  val poolClientFlow = Http().superPool[Promise[HttpResponse]](settings = ConnectionPoolSettings(system).withMaxConnections(10))
-  
-  val pipe = Source(requests)
-    .via(poolClientFlow)
-    .map(x => { println("-", x); x})
-    .runWith(Sink.head)
-    .map(_._1)
-    .flatMap(Future.fromTry)
+  val poolClientFlow = Http().superPool[Promise[HttpResponse]](settings = ConnectionPoolSettings(system).withMaxConnections(30))
 
-  // shut things off once the pipeline is done doing everything it's going to do
-  pipe.onComplete {
-    case Success(r) => r match {
-          case HttpResponse(StatusCodes.OK, headers, entity, _) =>
-            entity.dataBytes.runFold(ByteString(""))(_ ++ _).foreach { body =>
-              println("Got response, body: " + body.utf8String)
-            }
-          case resp @ HttpResponse(code, _, _, _) =>
-            println("Request failed, response code: " + code)
-            resp.discardEntityBytes()
-  }
-    case Failure(e) => {println(e)}
-  }
+  val dayPageHttpResponses: Source[Try[HttpResponse], NotUsed] =
+    Source(requests)
+      .via(poolClientFlow)
+      .map(_._1)
+
+  val drudgePageLinks =
+    dayPageHttpResponses
+      .via(html)
+      .map({x => println("x", x); x })
+      .mapConcat[DrudgePageLink](asyncParseDayPage)
+      .map({y => println("y", y); y })
+
+  val drudgePageHttpResponses: Source[Try[HttpResponse], NotUsed] =
+    drudgePageLinks
+      .map(_.forFlow)
+      .via(poolClientFlow)
+      .map(_._1)
+
+  val drudgeLinks =
+    drudgePageHttpResponses
+      .via(html)
+      .map({z => println("z", z); z})
+      .mapConcat[DrudgeLink](asyncTransformPage)
+      .runWith(Sink.head)
+      //.mapConcat[DrudgeLink](
+
+  drudgeLinks.onComplete({
+    case Success(a) => println("a", a)
+    case Failure(e) => println("e", e)
+  })
+  
 }
