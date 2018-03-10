@@ -12,16 +12,9 @@ import scala.collection.JavaConverters._
 
 object DrudgeScraperSequential {//extends App {
   
+  import ScraperUtils._
   import LinksFromDrudgePage._
-
-  trait Link {
-    def url: String
-  }
   
-  final case class DrudgePageLink(url: String, pageDt: LocalDateTime) extends Link
-  final case class DayPageLink(url: String, date: LocalDate) extends Link
-  final case class DrudgeLink(url: String, pageDt: LocalDateTime, hed: String, isSplash: Boolean, isTop: Boolean) extends Link
-
   def urlFromDate(date: LocalDate): String = {
     "http://www.drudgereportarchives.com/data/%d/%d/%d/index.htm".format(
         date.getYear(),
@@ -84,11 +77,15 @@ object DrudgeScraperSequential {//extends App {
     val parsedDayPage = parseDayPage(dayPage)
     val oneDrudgePageLink = parsedDayPage(0)
   
+    var allLinks: List[DrudgeLink] = List()
+
     for (drudgePageLink <- parsedDayPage) {
         val drudgePageDocument = fetchPageWithJsoup(drudgePageLink)
         val drudgeLinks = transformPage(drudgePageDocument, drudgePageLink.pageDt)
         println(drudgePageLink.pageDt, drudgeLinks.size)
+        allLinks = allLinks ::: drudgeLinks
       }
+    println(allLinks.length)
   }
    
 }

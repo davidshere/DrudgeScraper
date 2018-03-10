@@ -39,7 +39,7 @@ object ScraperUtils {
 
   def generateDayPageLinks: List[DayPageLink] = {
     val start = LocalDate.of(2001, 11, 18)
-    val end = LocalDate.of(2001, 11, 22)//now
+    val end = LocalDate.now
     for {
       daysFromStart <- 0L to DAYS.between(start, end) toList
       // clean this up please
@@ -67,11 +67,13 @@ object ScraperUtils {
   }
 
   def asyncParseDayPage(pageFuture: Future[String]): List[DrudgePageLink] = {
+    println("starting to parse day page")
     val page = Await.result(pageFuture, 1.second)
     parseDayPage(page)
   }
 
   def asyncTransformPage(pageFuture: Future[String]): List[DrudgeLink] = {
+    println("starting transform")
     val page = Await.result(pageFuture, 1.second)
     val soup = Jsoup.parse(page)
     transformPage(soup, LocalDateTime.of(2001, 11, 10, 1, 1, 1))
