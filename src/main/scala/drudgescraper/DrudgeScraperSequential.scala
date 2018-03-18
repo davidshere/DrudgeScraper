@@ -9,7 +9,11 @@ import org.jsoup.select.Elements
 
 import scala.collection.JavaConverters._
 
+object Moo {
+ 
+}
 
+/*
 object DrudgeScraperSequential {//extends App {
   
   import ScraperUtils._
@@ -89,3 +93,4 @@ object DrudgeScraperSequential {//extends App {
   }
    
 }
+* */

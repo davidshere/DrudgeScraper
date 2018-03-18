@@ -1,19 +1,18 @@
 package drudgescraper
 
+import scala.collection.JavaConverters._
+import scala.concurrent.{Future, Await, Promise}
+import scala.concurrent.duration._
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.util.{Success, Failure, Try}
+
 import java.time._
 import java.time.temporal.ChronoUnit.DAYS
-import scala.concurrent.duration._
 
+import akka.http.scaladsl.model._
 
 import org.jsoup.Jsoup
 import org.jsoup.nodes.{Document, Element}
-
-import scala.collection.JavaConverters._
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.{Future, Await, Promise}
-import scala.util.{Success, Failure, Try}
-
-import akka.http.scaladsl.model._
 
 object ScraperUtils {
 
@@ -21,16 +20,15 @@ object ScraperUtils {
 
   trait Link {
     def url: String
-
     def forFlow = (HttpRequest(HttpMethods.GET, this.url), Promise[HttpResponse])
   }
 
-  final case class DrudgePageLink(url: String, pageDt: LocalDateTime) extends Link
-  final case class DayPageLink(url: String, date: LocalDate) extends Link
-  final case class DrudgeLink(url: String, pageDt: LocalDateTime, hed: String, isSplash: Boolean, isTop: Boolean) extends Link
+  final case class DayPageLink(url: String, pageDt: LocalDate) extends Link
+  final case class DrudgePageLink(url: String, pageTimestamp: Long) extends Link
+  final case class DrudgeLink(url: String, pageTimestamp: Long, hed: String, isSplash: Boolean, isTop: Boolean) extends Link
 
-  private def urlFromDate(date: LocalDate): String = {
-    "http://www.drudgereportarchives.com/data/%d/%d/%d/index.htm".format(
+  private def dayPagePathFromDate(date: LocalDate): String = {
+    "/data/%d/%d/%d/index.htm".format(
         date.getYear(),
         date.getMonthValue(),
         date.getDayOfMonth()
@@ -40,22 +38,25 @@ object ScraperUtils {
   def generateDayPageLinks: List[DayPageLink] = {
     val start = LocalDate.of(2001, 11, 18)
     val end = LocalDate.now
-    for {
-      daysFromStart <- 0L to DAYS.between(start, end) toList
-      // clean this up please
-    } yield DayPageLink(urlFromDate(start.plusDays(daysFromStart)), start.plusDays(daysFromStart))
+    val daysFromStart = 0L to DAYS.between(start, end)
+    val dates = daysFromStart.map(x => start.plusDays(x)).toList
+
+    dates map (x => DayPageLink(dayPagePathFromDate(x), x))
   }
 
-  def transformDrudgePageUrlIntoLocalDateTime(url: String): LocalDateTime = {
-    val drudgePageDatetimeFormat = "yyyyMMdd_HHmmss"
-    val drudgePageUrlDatetimeFormat = format.DateTimeFormatter.ofPattern(drudgePageDatetimeFormat)
-    val drudgePageUrlDatetimePortion = url.split("/").last.split("\\.").head
-    LocalDateTime.parse(drudgePageUrlDatetimePortion, drudgePageUrlDatetimeFormat)
+  val drudgePageDatetimeFormat = "yyyyMMdd_HHmmss"
+  val drudgePageUrlDatetimeFormat = format.DateTimeFormatter.ofPattern(drudgePageDatetimeFormat)
+  val utc = ZoneId.ofOffset("UTC", ZoneOffset.ofHours(0))
+
+  def transformDrudgePageUrlIntoEpoch(url: String): Long = {
+    val urlDatetime = LocalDateTime.parse(url.slice(52, 67), drudgePageUrlDatetimeFormat)
+    urlDatetime.atZone(utc).toEpochSecond()
   }
 
   def drudgePageLinkFromElement(elem: Element): DrudgePageLink = {
-    val pageDt = transformDrudgePageUrlIntoLocalDateTime(elem.attr("href"))
-    DrudgePageLink(elem.attr("href"), pageDt)
+    val url = elem.attr("href")
+    val timestamp = transformDrudgePageUrlIntoEpoch(url)
+    DrudgePageLink(url, timestamp)
   }
 
   def parseDayPage(page: String): List[DrudgePageLink] = {
@@ -72,10 +73,22 @@ object ScraperUtils {
     parseDayPage(page)
   }
 
+  def drudgeLinkFromJsoupElement(elem: Element, pageDate: Long): DrudgeLink =
+    DrudgeLink(
+        elem.attr("href"),
+        pageDate,
+        elem.text,
+        elem.id=="splash",
+        elem.id=="top"
+    )
+
   def asyncTransformPage(pageFuture: Future[String]): List[DrudgeLink] = {
     println("starting transform")
     val page = Await.result(pageFuture, 1.second)
     val soup = Jsoup.parse(page)
-    transformPage(soup, LocalDateTime.of(2001, 11, 10, 1, 1, 1))
+    val drudgeLinks = transformPage(soup).map(link => drudgeLinkFromJsoupElement(link, 10)) take 1
+    println(drudgeLinks)
+    println("finishing transform")
+    drudgeLinks
   }
 }
