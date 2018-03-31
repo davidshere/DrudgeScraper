@@ -17,7 +17,7 @@ import akka.http.scaladsl.model._
 import akka.http.scaladsl.settings.ConnectionPoolSettings
 
 object DrudgeScraper extends App { 
-// DrudgeScraper {
+
   import ScraperUtils._
   import LinksFromDrudgePage._
   
@@ -47,33 +47,45 @@ object DrudgeScraper extends App {
     }
 
   val poolClientFlow = Http().cachedHostConnectionPool[Promise[HttpResponse]](host="www.drudgereportarchives.com", settings = ConnectionPoolSettings(system).withMaxConnections(20))
-  //val poolClientFlow = Http().superPool[Promise[HttpResponse]](settings = ConnectionPoolSettings(system).withMaxConnections(20))
 
   val requestToHtmlFlow = Flow[Try[HttpResponse]].map(htmlFromHttpResponse)
 
   val requests = ScraperUtils.generateDayPageLinks take 1
 
-  val drudgePageLinks: Source[ScraperUtils.DrudgePageLink, NotUsed] =
-    Source(requests)
+  val linkToFutureString: Flow[Link, Future[String], NotUsed] =  Flow[Link]
       .map(_.forFlow)
       .via(poolClientFlow)
       .map(_._1)
       .via(requestToHtmlFlow)
+
+  // linear source of drudge page links
+  val drudgePageLinks: Source[ScraperUtils.DrudgePageLink, NotUsed] =
+    Source(requests)
+      .via(linkToFutureString)
       .mapConcat[DrudgePageLink](asyncParseDayPage)
 
-  val drudgeLinks: Source[ScraperUtils.DrudgeLink, NotUsed] =
-    drudgePageLinks
-      .map(_.forFlow) // here's where we lose the timestamp
-      .via(poolClientFlow)
-      .map(_._1)
-      .via(requestToHtmlFlow)
-      .mapConcat[DrudgeLink](asyncTransformPage)
+  val seqSink = Sink.seq[Seq[DrudgeLink]]
 
-  // main thing running now
-  drudgeLinks
-    .runWith(Sink.seq)
-    .onComplete({
-      case Success(a) => {println("a", (a.length, a(0), (System.nanoTime() - startTime)/1e9)); system.terminate()}
-      case Failure(e) => println("e", e)
-    })
+  val drudgePageToLinksGraph = RunnableGraph.fromGraph(GraphDSL.create(seqSink) { implicit builder ⇒ sink =>
+    import GraphDSL.Implicits._
+
+    val drudgePageOut = builder.add(Broadcast[DrudgePageLink](2))
+    val tsAndHtmlToDrudgeLinks = builder.add(ZipWith[Future[String], Long, Seq[DrudgeLink]](asyncTransformPage))
+
+    drudgePageLinks ~> drudgePageOut.in
+
+    drudgePageOut.out(0) ~> linkToFutureString ~> tsAndHtmlToDrudgeLinks.in0
+    drudgePageOut.out(1) ~> Flow[DrudgePageLink].map(_.pageTimestamp) ~> tsAndHtmlToDrudgeLinks.in1
+
+    tsAndHtmlToDrudgeLinks.out ~> sink
+
+    ClosedShape
+  })
+
+  val result = drudgePageToLinksGraph.run()
+
+  result.onComplete({
+    case Success(a) => {println("a", (a.length, a(0), (System.nanoTime() - startTime)/1e9)); system.terminate()}
+    case Failure(e) => println("e", e)
+  })
 }

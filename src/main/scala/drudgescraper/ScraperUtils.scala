@@ -82,12 +82,12 @@ object ScraperUtils {
         elem.id=="top"
     )
 
-  def asyncTransformPage(pageFuture: Future[String]): List[DrudgeLink] = {
+  def asyncTransformPage(pageFuture: Future[String], pageTs: Long): List[DrudgeLink] = {
     println("starting transform")
     val page = Await.result(pageFuture, 1.second)
     val soup = Jsoup.parse(page)
-    val drudgeLinks = transformPage(soup).map(link => drudgeLinkFromJsoupElement(link, 10)) take 1
-    println(drudgeLinks)
+    val linkElements = transformPage(soup)
+    val drudgeLinks = linkElements.map(drudgeLinkFromJsoupElement(_, pageTs))
     println("finishing transform")
     drudgeLinks
   }

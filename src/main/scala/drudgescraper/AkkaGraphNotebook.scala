@@ -12,7 +12,7 @@ import akka.stream.scaladsl._
 
 import ScraperUtils._
 
-object AkkaGraphNotebook extends App {
+object AkkaGraphNotebook { //extends App {
 
   implicit val system = ActorSystem("graph-test")
   implicit val ec = system.dispatcher
@@ -43,7 +43,7 @@ object AkkaGraphNotebook extends App {
   
   r.onComplete {
     case Success(b) => {println(b); system.terminate()}
-    case Failure(e) => println(e)
+    case Failure(e) => {println(e); system.terminate()}
   }
 
 
