@@ -59,19 +59,16 @@ object ScraperUtils {
     DrudgePageLink(url, timestamp)
   }
 
-  def parseDayPage(page: String): List[DrudgePageLink] = {
+  def dayPageToDrudgePageLinks(page: String): List[DrudgePageLink] = {
     val doc = Jsoup.parse(page)
+
     for {
       link <- doc.select("a[href]").asScala.toList;
       if (link.text() != "^" && link.attr("href").startsWith("http://www.drudgereportArchives.com/data/"))
     } yield drudgePageLinkFromElement(link)
   }
 
-  def asyncParseDayPage(pageFuture: Future[String]): List[DrudgePageLink] = {
-    println("starting to parse day page")
-    val page = Await.result(pageFuture, 1.second)
-    parseDayPage(page)
-  }
+  def transformDayPage(pageFuture: Future[String]): Future[List[DrudgePageLink]] = pageFuture.map(dayPageToDrudgePageLinks)
 
   def drudgeLinkFromJsoupElement(elem: Element, pageDate: Long): DrudgeLink =
     DrudgeLink(
@@ -82,13 +79,4 @@ object ScraperUtils {
         elem.id=="top"
     )
 
-  def asyncTransformPage(pageFuture: Future[String], pageTs: Long): List[DrudgeLink] = {
-    println("starting transform")
-    val page = Await.result(pageFuture, 1.second)
-    val soup = Jsoup.parse(page)
-    val linkElements = transformPage(soup)
-    val drudgeLinks = linkElements.map(drudgeLinkFromJsoupElement(_, pageTs))
-    println("finishing transform")
-    drudgeLinks
-  }
 }

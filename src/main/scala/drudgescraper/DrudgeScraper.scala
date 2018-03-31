@@ -64,13 +64,13 @@ object DrudgeScraper extends App {
       .via(linkToFutureString)
       .mapConcat[DrudgePageLink](asyncParseDayPage)
 
-  val seqSink = Sink.seq[Seq[DrudgeLink]]
+  val seqSink = Sink.seq[Future[Seq[DrudgeLink]]]
 
   val drudgePageToLinksGraph = RunnableGraph.fromGraph(GraphDSL.create(seqSink) { implicit builder ⇒ sink =>
     import GraphDSL.Implicits._
 
     val drudgePageOut = builder.add(Broadcast[DrudgePageLink](2))
-    val tsAndHtmlToDrudgeLinks = builder.add(ZipWith[Future[String], Long, Seq[DrudgeLink]](asyncTransformPage))
+    val tsAndHtmlToDrudgeLinks = builder.add(ZipWith[Future[String], Long, Future[Seq[DrudgeLink]]](transformDrudgePage))
 
     drudgePageLinks ~> drudgePageOut.in
 
