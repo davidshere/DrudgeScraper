@@ -1,7 +1,6 @@
 package drudgescraper
 
-
-import org.jsoup.nodes.{Document, Element}
+import org.jsoup.nodes.{ Document, Element }
 
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -15,11 +14,10 @@ import ScraperUtils._
 
 import org.jsoup.Jsoup
 
-
 object LinksFromDrudgePage {
 
   import PageMetadataParser.enrich
-     
+
   def drudgePageToLinkElements(page: Document): List[Element] = {
     val enrichedPage = enrich(page)
     val links = enrichedPage
